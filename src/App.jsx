@@ -90,16 +90,21 @@ export default function App() {
     if (saved && deleted) undoDelete.recordDelete(deleted.task, deleted.index, deleted.afterId);
   };
 
-  const handleUndoDelete = () => {
-    const entry = undoDelete.undo();
-    if (entry) setTasks(prev => restoreTask(prev, entry));
+  const handleUndoDelete = async () => {
+    const entry = undoDelete.peek();
+    if (!entry) return;
+    undoDelete.pause();
+    const saved = await setTasks(prev => restoreTask(prev, entry));
+    if (saved && undoDelete.peek() === entry) undoDelete.undo();
+    undoDelete.resume();
   };
 
   // An import replaces the whole list, so saved positions no longer mean anything.
   // Imported records have no id yet, and selecting and moving tasks go by id.
-  const handleTasksUpdate = (nextTasks) => {
-    undoDelete.dismiss();
-    setTasks(nextTasks.map(task => (task.id ? task : { ...task, id: createTaskId() })));
+  const handleTasksUpdate = async (nextTasks) => {
+    const saved = await setTasks(nextTasks.map(task => (task.id ? task : { ...task, id: createTaskId() })));
+    if (saved) undoDelete.dismiss();
+    return saved;
   };
 
   const handleUpdateTaskText = (taskToUpdate, newText) => {
