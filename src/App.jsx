@@ -19,7 +19,7 @@ import { canReorder, moveTask, getMoveMessage } from './utils/reorderUtils';
 import { loadEngineState, recordTaskCompletion, calcStreak, getBalance } from './utils/streakEngine';
 
 export default function App() {
-  const [tasks, setTasks] = useLocalStorage('tasks', []);
+  const [tasks, setTasks, taskStorage] = useLocalStorage('tasks', []);
   const [engine, setEngine] = useState(() => loadEngineState());
   const { isLight, toggleTheme } = useTheme();
   const undoDelete = useUndoDelete();
@@ -60,38 +60,34 @@ export default function App() {
     };
   }, []);
 
-  const handleAddTask = (newTask) => {
-    setTasks(prev => [...prev, newTask]);
+  const handleAddTask = async (newTask) => {
+    const saved = await setTasks(prev => [...prev, newTask]);
+    if (!saved) return false;
     if (!historyMode && currentFilter !== 'all') {
       setCurrentFilter('active');
     }
+    return true;
   };
 
-  const handleToggleComplete = (taskToToggle) => {
-    // Only a new completion counts. Un-completing does not take points back.
-    if (!taskToToggle.completed) {
-      setEngine(recordTaskCompletion(taskToToggle.id));
-    }
-    setTasks(prev =>
-      prev.map(task => {
-        if (task === taskToToggle) {
-          const nextCompleted = !task.completed;
-          return {
-            ...task,
-            completed: nextCompleted,
-            completedAt: nextCompleted ? new Date().toISOString() : null
-          };
-        }
-        return task;
-      })
-    );
+  const handleToggleComplete = async (taskToToggle) => {
+    let completedId;
+    const saved = await setTasks(prev => prev.map(task => {
+      if (task.id !== taskToToggle.id) return task;
+      if (!task.completed) completedId = task.id;
+      return { ...task, completed: !task.completed, completedAt: task.completed ? null : new Date().toISOString() };
+    }));
+    if (saved && completedId) setEngine(recordTaskCompletion(completedId));
   };
 
-  const handleDeleteTask = (taskToDelete) => {
-    const index = tasks.indexOf(taskToDelete);
-    if (index === -1) return;
-    undoDelete.recordDelete(taskToDelete, index, tasks[index - 1]?.id);
-    setTasks(prev => prev.filter(task => task !== taskToDelete));
+  const handleDeleteTask = async (taskToDelete) => {
+    let deleted;
+    const saved = await setTasks(prev => {
+      const index = prev.findIndex(task => task.id === taskToDelete.id);
+      if (index === -1) return prev;
+      deleted = { task: prev[index], index, afterId: prev[index - 1]?.id };
+      return prev.filter(task => task.id !== taskToDelete.id);
+    });
+    if (saved && deleted) undoDelete.recordDelete(deleted.task, deleted.index, deleted.afterId);
   };
 
   const handleUndoDelete = () => {
@@ -109,7 +105,7 @@ export default function App() {
   const handleUpdateTaskText = (taskToUpdate, newText) => {
     setTasks(prev =>
       prev.map(task =>
-        task === taskToUpdate ? { ...task, text: newText } : task
+        task.id === taskToUpdate.id ? { ...task, text: newText } : task
       )
     );
   };
@@ -117,7 +113,7 @@ export default function App() {
   // Swaps one task for updater(task). Used for changes that do not need their
   // own handler, like the subtask checklist.
   const handleUpdateTask = (taskToUpdate, updater) => {
-    setTasks(prev => prev.map(task => (task === taskToUpdate ? updater(task) : task)));
+    setTasks(prev => prev.map(task => (task.id === taskToUpdate.id ? updater(task) : task)));
   };
 
   const handleToggleHistory = () => {
@@ -125,11 +121,17 @@ export default function App() {
   };
 
   // The tasks array is saved as is, so the new order survives a refresh.
-  const handleMoveTask = (task, target, place) => {
-    const next = moveTask(tasks, task, target, place);
-    if (next === tasks) return;
-    setTasks(next);
-    setMoveMessage(getMoveMessage(next, task));
+  const handleMoveTask = async (task, target, place) => {
+    let announcement = '';
+    const saved = await setTasks(prev => {
+      const current = prev.find(item => item.id === task.id);
+      const destination = prev.find(item => item.id === target.id);
+      if (!current || !destination) return prev;
+      const next = moveTask(prev, current, destination, place);
+      announcement = getMoveMessage(next, current);
+      return next;
+    });
+    if (saved) setMoveMessage(announcement);
   };
 
   const handleClearSearch = () => {
@@ -155,6 +157,10 @@ export default function App() {
         onOpenBackup={() => setIsBackupOpen(true)}
       />
 
+      {!taskStorage.writable && <p role="alert">Task editing is read-only because this browser does not support Web Locks. Your saved tasks are still available.</p>}
+      {taskStorage.error && <p role="alert">{taskStorage.error}</p>}
+      <fieldset disabled={!taskStorage.writable} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
+      <legend className="visually-hidden">Tasks</legend>
       <TaskForm
         onAddTask={handleAddTask}
         historyMode={historyMode}
@@ -242,6 +248,7 @@ export default function App() {
 
       {historyMode && <ChartsOverview tasks={tasks} isLight={isLight} />}
 
+      </fieldset>
       <BackupModal
         isOpen={isBackupOpen}
         onClose={() => setIsBackupOpen(false)}
