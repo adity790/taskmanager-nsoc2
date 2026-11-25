@@ -97,6 +97,9 @@ export default function TaskItem({ task, reorder, onToggleComplete, onDelete, on
       />
 
       <span className="task-details">
+        <span className={`priority-label priority-label-${priorityClass}`}>
+          {task.priority || 'medium'} priority
+        </span>
         {overdue && <span className="overdue-badge">Overdue</span>}
 
         {isEditing ? (
